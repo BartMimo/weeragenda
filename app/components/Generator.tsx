@@ -77,7 +77,7 @@ export default function Generator({ originUrl }: { originUrl: string }) {
       <section className="hero">
         <div className="eyebrow"><span className="bar" />WeerAgenda · v1.0</div>
         <h1 className="headline">
-          Je weer. <em>In je agenda.</em>
+          Het weer. <em>in jouw agenda.</em>
         </h1>
         <p className="subhead">
           Eén iCal-link en je agenda toont 7 dagen weersverwachting,
