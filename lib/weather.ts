@@ -29,11 +29,15 @@ export type Forecast = {
   location: GeoResult;
   fetchedAt: string;     // ISO
   timezone: string;
+  /** Offset from UTC at the location, in seconds. Used to convert
+   *  Open-Meteo's local-timestamped hourly samples to UTC for ICS. */
+  utcOffsetSeconds: number;
   days: DaySummary[];    // length 7
 };
 
 type ApiResponse = {
   timezone: string;
+  utc_offset_seconds: number;
   hourly: {
     time: string[];
     temperature_2m: number[];
@@ -103,6 +107,7 @@ export async function getForecast(loc: GeoResult): Promise<Forecast> {
     location: loc,
     fetchedAt: new Date().toISOString(),
     timezone: data.timezone,
+    utcOffsetSeconds: data.utc_offset_seconds,
     days,
   };
 }

@@ -3,47 +3,90 @@
 import { useMemo, useRef, useState } from "react";
 import { DAY_SHORT_NL, MONTHS_NL, describeCode } from "@/lib/i18n";
 
-// --- mock data for the marketing "what your calendar looks like" preview.
-// (The real feed served at /api/ical uses live Open-Meteo data.)
+type Picked = {
+  id: string;
+  name: string;
+  country: string;
+  countryCode: string;
+  admin1?: string;
+  latitude: number;
+  longitude: number;
+  timezone: string;
+  population?: number;
+};
 
-type MockCond = { code: number };
+// --- seeded mock data for the landing-page preview only.
+// The real feed at /api/ical uses live Open-Meteo data.
+
 function seededRand(seed: number, i: number) {
   const x = Math.sin(seed * 1000 + i * 13.37) * 10000;
   return x - Math.floor(x);
 }
 
-function mockForecast(loc: string) {
+const PREVIEW_HOURS = [8, 12, 16, 20];
+
+type MockBlock = {
+  hour: number;
+  code: number;
+  temp: number;
+  rain: number;
+  wind: number;
+};
+
+type MockDay = {
+  date: Date;
+  hi: number;
+  lo: number;
+  blocks: MockBlock[];
+};
+
+function mockForecast(loc: string): MockDay[] {
   const seed = [...(loc || "amsterdam")].reduce((a, c) => a + c.charCodeAt(0), 0);
   const codes = [0, 1, 2, 3, 45, 61, 63, 80, 95];
   const today = new Date();
   return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(today);
     d.setDate(today.getDate() + i);
-    const code = codes[Math.floor(seededRand(seed, i) * codes.length)];
-    const hi = Math.round(10 + seededRand(seed, i + 1) * 18);
-    const lo = hi - Math.round(3 + seededRand(seed, i + 2) * 5);
-    const rain = Math.round(seededRand(seed, i + 3) * 95);
-    const wind = Math.round(5 + seededRand(seed, i + 4) * 25);
-    return { date: d, code, hi, lo, rain, wind };
-  });
-}
+    const baseHi = Math.round(10 + seededRand(seed, i + 1) * 18);
+    const baseLo = baseHi - Math.round(3 + seededRand(seed, i + 2) * 5);
 
-function slugify(s: string) {
-  return s.toLowerCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
+    const blocks: MockBlock[] = PREVIEW_HOURS.map((hour, j) => {
+      // warmer mid-day, colder morning/evening
+      const curveT = Math.sin(((hour - 4) / 16) * Math.PI);
+      const temp = Math.round(baseLo + (baseHi - baseLo) * (0.3 + 0.7 * curveT));
+      const code = codes[Math.floor(seededRand(seed, i * 10 + j) * codes.length)];
+      const rain = Math.round(seededRand(seed, i * 10 + j + 5) * 90);
+      const wind = Math.round(6 + seededRand(seed, i * 10 + j + 9) * 20);
+      return { hour, code, temp, rain, wind };
+    });
+    return { date: d, hi: baseHi, lo: baseLo, blocks };
+  });
 }
 
 function titleCase(s: string) {
   return s.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
 }
 
+function locationLine(p: Picked) {
+  const parts = [p.name];
+  if (p.admin1 && p.admin1 !== p.name) parts.push(p.admin1);
+  if (p.country) parts.push(p.country);
+  return parts.join(", ");
+}
+
+function fmtPop(n?: number) {
+  if (!n) return null;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M inw.`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k inw.`;
+  return `${n} inw.`;
+}
+
 export default function Generator({ originUrl }: { originUrl: string }) {
   const [loc, setLoc] = useState("");
-  const [submitted, setSubmitted] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [picked, setPicked] = useState<Picked | null>(null);
+  const [alts, setAlts] = useState<Picked[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -54,15 +97,28 @@ export default function Generator({ originUrl }: { originUrl: string }) {
       setError("Voer een plaats of postcode in om door te gaan.");
       return;
     }
-    if (q.length < 3) {
-      setError(`We konden "${q}" niet vinden. Probeer een Nederlandse stad of postcode.`);
+    if (q.length < 2) {
+      setError(`Voer minstens twee tekens in.`);
       return;
     }
     setLoading(true);
-    // brief delay so the loading state is visible
-    await new Promise(r => setTimeout(r, 500));
-    setLoading(false);
-    setSubmitted(q);
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+      const data = (await res.json()) as { results: Picked[] };
+      const results = data.results ?? [];
+      if (!results.length) {
+        setPicked(null);
+        setAlts([]);
+        setError(`We konden "${q}" niet vinden. Probeer een andere plaats of postcode.`);
+      } else {
+        setPicked(results[0]);
+        setAlts(results.slice(1));
+      }
+    } catch {
+      setError("Er ging iets mis bij het opzoeken. Probeer het zo nog eens.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const pick = (v: string) => {
@@ -70,19 +126,19 @@ export default function Generator({ originUrl }: { originUrl: string }) {
     inputRef.current?.focus();
   };
 
-  const previewLoc = submitted || "Amsterdam";
+  const previewLoc = picked?.name || "Amsterdam";
 
   return (
     <>
       <section className="hero">
         <div className="eyebrow"><span className="bar" />WeerAgenda · v1.0</div>
         <h1 className="headline">
-          Het weer. <em>in jouw agenda.</em>
+          Het weer in <em>jouw Agenda</em>.
         </h1>
         <p className="subhead">
-          Eén iCal-link en je agenda toont 7 dagen weersverwachting,
-          ieder uur ververst. Geen app. Geen account. Werkt in Google Calendar,
-          Apple Agenda en Outlook.
+          Eén iCal-link en jouw agenda toont elke 2 uur het weer, 7 dagen
+          vooruit. Ieder uur ververst. Geen app. Geen account. Werkt in
+          Google Calendar, Apple Agenda en Outlook.
         </p>
 
         <form className="form-card" onSubmit={handleSubmit}>
@@ -102,7 +158,7 @@ export default function Generator({ originUrl }: { originUrl: string }) {
               {loading ? (
                 <>
                   <span className="spin" />
-                  Ophalen…
+                  Zoeken…
                 </>
               ) : (
                 <>
@@ -125,17 +181,47 @@ export default function Generator({ originUrl }: { originUrl: string }) {
         {error && <div className="error">⚠ {error}</div>}
       </section>
 
-      {submitted && <Result location={submitted} originUrl={originUrl} />}
+      {picked && (
+        <Result
+          picked={picked}
+          alternatives={alts}
+          onPick={(p) => {
+            setPicked(p);
+            setAlts((prev) => {
+              const merged = [picked, ...prev].filter(x => x.id !== p.id);
+              return merged;
+            });
+          }}
+          originUrl={originUrl}
+        />
+      )}
 
       <AgendaPreview location={previewLoc} />
     </>
   );
 }
 
-function Result({ location, originUrl }: { location: string; originUrl: string }) {
+function Result({
+  picked,
+  alternatives,
+  onPick,
+  originUrl,
+}: {
+  picked: Picked;
+  alternatives: Picked[];
+  onPick: (p: Picked) => void;
+  originUrl: string;
+}) {
   const [copied, setCopied] = useState(false);
-  const slug = slugify(location);
-  const url = `${originUrl}/api/ical?location=${encodeURIComponent(location)}`;
+  const [showAlts, setShowAlts] = useState(false);
+
+  const params = new URLSearchParams({
+    lat: picked.latitude.toFixed(4),
+    lon: picked.longitude.toFixed(4),
+    name: picked.name,
+    tz: picked.timezone,
+  });
+  const url = `${originUrl}/api/ical?${params.toString()}`;
   const webcal = url.replace(/^https?:/, "webcal:");
 
   const copy = async () => {
@@ -153,8 +239,8 @@ function Result({ location, originUrl }: { location: string; originUrl: string }
     setTimeout(() => setCopied(false), 1800);
   };
 
-  const displayName = titleCase(location);
-  const forecast = useMemo(() => mockForecast(location), [location]);
+  const displayName = titleCase(picked.name);
+  const forecast = useMemo(() => mockForecast(picked.name), [picked.name]);
 
   return (
     <section className="hero" style={{ paddingTop: 0 }}>
@@ -162,8 +248,51 @@ function Result({ location, originUrl }: { location: string; originUrl: string }
         <div className="panel">
           <div className="panel-label">
             <span>Jouw iCal feed</span>
-            <span>UID · weeragenda/{slug}</span>
+            <span>{picked.countryCode || "—"} · {picked.latitude.toFixed(2)}, {picked.longitude.toFixed(2)}</span>
           </div>
+
+          <div className="picked-row">
+            <div className="picked-mark">✓</div>
+            <div className="picked-info">
+              <div className="picked-name">{locationLine(picked)}</div>
+              <div className="picked-meta">
+                {fmtPop(picked.population) && <span>{fmtPop(picked.population)}</span>}
+                <span>tz: {picked.timezone}</span>
+              </div>
+            </div>
+            {alternatives.length > 0 && (
+              <button
+                type="button"
+                className="picked-switch"
+                onClick={() => setShowAlts((s) => !s)}
+                aria-expanded={showAlts}
+              >
+                {showAlts ? "Sluit" : "Andere?"}
+              </button>
+            )}
+          </div>
+
+          {showAlts && alternatives.length > 0 && (
+            <div className="alts">
+              <div className="alts-label">Bedoel je een van deze?</div>
+              {alternatives.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  className="alt-row"
+                  onClick={() => { onPick(a); setShowAlts(false); }}
+                >
+                  <span className="alt-name">{locationLine(a)}</span>
+                  <span className="alt-meta">
+                    {fmtPop(a.population) ?? "—"}
+                    <span className="alt-dot">·</span>
+                    {a.latitude.toFixed(2)}, {a.longitude.toFixed(2)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="url-block">
             <div className="url-text">{url}</div>
             <button className={`copy-btn ${copied ? "ok" : ""}`} onClick={copy}>
@@ -197,7 +326,7 @@ function Result({ location, originUrl }: { location: string; originUrl: string }
             </div>
             <div className="meta-cell">
               <div className="k">Vooruitzicht</div>
-              <div className="v">7 dagen · all-day</div>
+              <div className="v">7d · 2-uurs blok</div>
             </div>
           </div>
         </div>
@@ -205,11 +334,13 @@ function Result({ location, originUrl }: { location: string; originUrl: string }
         <div className="panel preview">
           <div className="preview-head">
             <div className="preview-title">{displayName}</div>
-            <div className="preview-sub">Voorbeeld · 7d</div>
+            <div className="preview-sub">Daggemiddelden · 7d</div>
           </div>
           <div className="week">
             {forecast.map((d, i) => {
-              const cond = describeCode(d.code);
+              // pick a "headline" block for each day — the warmest of the four
+              const headline = d.blocks.reduce((m, b) => (b.temp > m.temp ? b : m), d.blocks[0]);
+              const cond = describeCode(headline.code);
               return (
                 <div className="day" key={i}>
                   <div className="when">
@@ -224,7 +355,7 @@ function Result({ location, originUrl }: { location: string; originUrl: string }
                     <span>{cond.label}</span>
                   </div>
                   <div className="stats">
-                    <b>{d.hi}°</b> / {d.lo}° &nbsp;·&nbsp; {d.rain}% &nbsp;·&nbsp; {d.wind} km/u
+                    <b>{d.hi}°</b> / {d.lo}° &nbsp;·&nbsp; {headline.rain}% &nbsp;·&nbsp; {headline.wind} km/u
                   </div>
                 </div>
               );
@@ -239,33 +370,21 @@ function Result({ location, originUrl }: { location: string; originUrl: string }
 function AgendaPreview({ location }: { location: string }) {
   const displayName = titleCase(location);
   const forecast = useMemo(() => mockForecast(location), [location]);
-  const [selected, setSelected] = useState(0);
+  const [sel, setSel] = useState<{ day: number; block: number }>({ day: 0, block: 1 });
 
-  const hourly = useMemo(() => {
-    const day = forecast[selected];
-    const seed = [...(location + selected)].reduce((a, c) => a + c.charCodeAt(0), 0);
-    const codes = [0, 1, 2, 3, 45, 61, 80];
-    const hours = [6, 9, 12, 15, 18, 21];
-    return hours.map((h, i) => {
-      const code = codes[Math.floor(seededRand(seed, i + 1) * codes.length)];
-      const temp = Math.round(day.lo + (day.hi - day.lo) * (0.3 + seededRand(seed, i + 2) * 0.7));
-      const rain = Math.round(seededRand(seed, i + 3) * (day.rain + 10));
-      return { h, code, temp, rain };
-    });
-  }, [forecast, selected, location]);
-
-  const day = forecast[selected];
-  const dayCond = describeCode(day.code);
-  const summary = `${dayCond.emoji} ${day.lo}° / ${day.hi}° — ${displayName}`;
+  const day = forecast[sel.day];
+  const block = day.blocks[sel.block];
+  const cond = describeCode(block.code);
+  const startHH = String(block.hour).padStart(2, "0");
+  const endHH = String((block.hour + 2) % 24).padStart(2, "0");
+  const summary = `${cond.emoji} ${block.temp}° · ${cond.label}`;
 
   const otherEvents = [
     { dow: 1, t: "Standup", cls: "blue" },
-    { dow: 1, t: "Lunch met Sanne", cls: "green" },
     { dow: 2, t: "Design review", cls: "purple" },
     { dow: 3, t: "Tandarts", cls: "blue" },
     { dow: 4, t: "Sprint planning", cls: "purple" },
     { dow: 5, t: "Vrijdagmiddagborrel", cls: "green" },
-    { dow: 6, t: "Tennis · Vondelpark", cls: "blue" },
   ];
 
   const fmtRange = () => {
@@ -278,12 +397,12 @@ function AgendaPreview({ location }: { location: string }) {
     <section className="agenda-section" id="preview">
       <div className="section-kicker">— Hoe het eruit ziet</div>
       <h2 className="section-title">
-        Naast je <em>vergaderingen</em>.
+        Elke <em>twee uur</em> een update.
       </h2>
       <p className="agenda-intro">
-        Elke dag krijgt één hele-dag event bovenaan met emoji, minimum- en
-        maximumtemperatuur. Klik een dag aan om de uurlijkse uitsplitsing te
-        zien die in de event-beschrijving staat.
+        Geen massieve hele-dag balk: je krijgt twaalf compacte blokjes per dag,
+        elk met de emoji, temperatuur en weerconditie voor die 2 uur. Klik
+        een blokje om te zien wat erin staat.
       </p>
 
       <div className="agenda-shell">
@@ -299,14 +418,7 @@ function AgendaPreview({ location }: { location: string }) {
           </div>
 
           <div className="gcal-grid">
-            <div className="gcal-rail">
-              <div className="hour">09</div>
-              <div className="hour">12</div>
-              <div className="hour">15</div>
-              <div className="hour">18</div>
-            </div>
             {forecast.map((d, i) => {
-              const cond = describeCode(d.code);
               const isToday = i === 0;
               return (
                 <div className="gcal-col" key={i}>
@@ -314,14 +426,27 @@ function AgendaPreview({ location }: { location: string }) {
                     <div className="dow">{DAY_SHORT_NL[d.date.getDay()]}</div>
                     <div className={`dnum ${isToday ? "today" : ""}`}>{d.date.getDate()}</div>
                   </div>
-                  <button
-                    type="button"
-                    className={`gcal-chip ${selected === i ? "active" : ""}`}
-                    onClick={() => setSelected(i)}
-                    title={`${cond.emoji} ${d.lo}° / ${d.hi}° — ${displayName}`}
-                  >
-                    {cond.emoji} {d.lo}° / {d.hi}°
-                  </button>
+
+                  <div className="block-stack">
+                    {d.blocks.map((b, j) => {
+                      const bCond = describeCode(b.code);
+                      const active = sel.day === i && sel.block === j;
+                      return (
+                        <button
+                          key={j}
+                          type="button"
+                          className={`block-pill ${active ? "active" : ""}`}
+                          onClick={() => setSel({ day: i, block: j })}
+                          title={`${String(b.hour).padStart(2, "0")}:00 ${bCond.emoji} ${b.temp}° · ${bCond.label}`}
+                        >
+                          <span className="bp-time">{String(b.hour).padStart(2, "0")}</span>
+                          <span className="bp-emoji">{bCond.emoji}</span>
+                          <span className="bp-temp">{b.temp}°</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
                   {otherEvents
                     .filter((e) => e.dow === i)
                     .map((e, j) => (
@@ -338,35 +463,37 @@ function AgendaPreview({ location }: { location: string }) {
             <div className="gcal-event-bar" />
             <div className="gcal-event-title">{summary}</div>
             <div className="gcal-event-meta">
-              <span className="pill">Hele dag</span>
+              <span className="pill">{startHH}:00 – {endHH}:00</span>
               <span>
                 {DAY_SHORT_NL[day.date.getDay()]}{" "}
                 {String(day.date.getDate()).padStart(2, "0")}.
                 {String(day.date.getMonth() + 1).padStart(2, "0")}
               </span>
-              <span>{dayCond.label}</span>
+              <span>{displayName}</span>
             </div>
           </div>
           <div className="gcal-event-body">
-            <div className="field">Beschrijving · uurlijks</div>
-            <div className="hourly">
-              {hourly.map((h, i) => {
-                const cond = describeCode(h.code);
-                return (
-                  <div className="h-row" key={i}>
-                    <div className="h-cell time">{String(h.h).padStart(2, "0")}:00</div>
-                    <div className="h-cell icon">{cond.emoji}</div>
-                    <div className="h-cell cond">{cond.label}</div>
-                    <div className="h-cell stat">
-                      <b style={{ color: "var(--fg)" }}>{h.temp}°</b> ·{" "}
-                      <span className="rain">{h.rain}%</span>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="field">Beschrijving</div>
+            <div className="stat-list">
+              <div className="stat-row">
+                <span className="stat-k">Temperatuur</span>
+                <span className="stat-v"><b>{block.temp}°C</b></span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-k">Regenkans</span>
+                <span className="stat-v"><b className="rain">{block.rain}%</b></span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-k">Wind</span>
+                <span className="stat-v"><b>{block.wind} km/u</b></span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-k">Conditie</span>
+                <span className="stat-v">{cond.label}</span>
+              </div>
             </div>
             <div className="gcal-event-foot">
-              <span>wind {day.wind} km/u · zw</span>
+              <span>1 van 12 blokken · {DAY_SHORT_NL[day.date.getDay()]}</span>
               <span>bron · open-meteo</span>
             </div>
           </div>

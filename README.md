@@ -18,10 +18,11 @@ hourly breakdown in the description.
 
 ## ICS shape
 
-- One `VEVENT` per day, all-day (`DTSTART;VALUE=DATE` / `DTEND;VALUE=DATE`)
-- `SUMMARY` — `⛅ 12° / 19° — Amsterdam`
-- `DESCRIPTION` — hourly table (06/09/12/15/18/21h) with condition, temp, rain%, wind
-- `UID` — `weather-YYYYMMDD-{slug}@weeragenda`
+- 12 `VEVENT`'s per day (2-hour blocks: 00–02, 02–04, …, 22–24) × 7 days = 84 events
+- Times in UTC, computed from Open-Meteo's local timestamps + `utc_offset_seconds`
+- `SUMMARY` — `☀ 18° · Helder`
+- `DESCRIPTION` — condition, temperature, rain%, wind speed for that block
+- `UID` — `weather-YYYYMMDDTHH-{slug}@weeragenda`
 - `REFRESH-INTERVAL;VALUE=DURATION:PT1H` + `X-PUBLISHED-TTL:PT1H` so Google/Apple
   poll hourly
 - `CACHE-CONTROL: public, s-maxage=3600` so Vercel's edge cache holds it for an hour

@@ -67,7 +67,7 @@ export default function Instructions() {
     <section className="instructions" id="instructions">
       <div className="section-kicker">— Installatie</div>
       <h2 className="section-title">
-        In <em>vier stappen</em> in je agenda.
+        In <em>vier stappen</em> in jouw agenda.
       </h2>
 
       <div className="tabs" role="tablist">
