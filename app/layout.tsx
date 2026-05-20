@@ -25,13 +25,13 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "WeerAgenda — Je weer. In je agenda.",
+  title: "WeerAgenda — Het weer in jouw agenda.",
   description:
     "Eén iCal-link en je agenda toont 7 dagen weersverwachting, ieder uur ververst. Werkt in Google Calendar, Apple Agenda en Outlook.",
   metadataBase: new URL("https://weeragenda.app"),
   openGraph: {
     title: "WeerAgenda",
-    description: "Je weer. In je agenda.",
+    description: "Het weer in jouw agenda.",
     locale: "nl_NL",
   },
 };
